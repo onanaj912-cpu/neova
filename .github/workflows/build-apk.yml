@@ -104,6 +104,11 @@ jobs:
           PY
 
       - name: Construire APK signe
+        env:
+          KEYSTORE_FILE: ${{ github.workspace }}/android/app/neova-release.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: flutter build apk --release
 
       - name: Publier APK
