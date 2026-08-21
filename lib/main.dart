@@ -732,7 +732,7 @@ class _NeovaHomeState extends State<NeovaHome> {
                           '${objectifs.length}',
                           style: const TextStyle(
                             fontWeight: FontWeight.bold,
-                            fontSize: 18,
+
                           ),
                         ),
                       ],
