@@ -32,6 +32,17 @@ jobs:
         run: |
           echo "$KEYSTORE_BASE64" | base64 --decode > android/app/neova-release.jks
 
+      - name: Nettoyer la configuration Android
+        run: |
+          python3 - <<'PY2'
+          from pathlib import Path
+          import re
+          p = Path("android/app/build.gradle.kts")
+          s = p.read_text()
+          s = re.sub(r'\n\s*kotlin\s*\{.*?\n\s*\}', '', s, flags=re.S)
+          p.write_text(s)
+          PY2
+
       - name: Configurer la signature Release
         env:
           KEYSTORE_FILE: ${{ github.workspace }}/android/app/neova-release.jks
@@ -55,6 +66,11 @@ jobs:
           }
 
           '''
+
+          import re
+
+          # Supprimer un éventuel bloc Kotlin mal formé
+          s = re.sub(r'\n\s*kotlin\s*\{.*?\n\s*\}\s*$', '\n', s, flags=re.S)
 
           if "signingConfigs {" not in s:
               s = s.replace("    buildTypes {", signing + "    buildTypes {", 1)
