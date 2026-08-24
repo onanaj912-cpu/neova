@@ -1,11 +1,16 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const NeovaApp());
 }
+
+// ============================================================
+// APPLICATION
+// ============================================================
 
 class NeovaApp extends StatelessWidget {
   const NeovaApp({super.key});
@@ -71,8 +76,12 @@ class Objectif {
   factory Objectif.fromJson(Map<String, dynamic> json) {
     return Objectif(
       nom: json['nom']?.toString() ?? '',
-      cible: (json['cible'] as num?)?.toInt() ?? 0,
-      epargne: (json['epargne'] as num?)?.toInt() ?? 0,
+      cible: json['cible'] is num
+          ? (json['cible'] as num).toInt()
+          : 0,
+      epargne: json['epargne'] is num
+          ? (json['epargne'] as num).toInt()
+          : 0,
       dateDeblocage: DateTime.tryParse(
             json['dateDeblocage']?.toString() ?? '',
           ) ??
@@ -110,7 +119,9 @@ class Operation {
   factory Operation.fromJson(Map<String, dynamic> json) {
     return Operation(
       titre: json['titre']?.toString() ?? '',
-      montant: (json['montant'] as num?)?.toInt() ?? 0,
+      montant: json['montant'] is num
+          ? (json['montant'] as num).toInt()
+          : 0,
       positif: json['positif'] == true,
       date: DateTime.tryParse(
             json['date']?.toString() ?? '',
@@ -125,89 +136,156 @@ class Operation {
 // ============================================================
 
 class NeovaStorage {
-  static const String soldeKey = 'neova_solde_v2';
-  static const String objectifsKey = 'neova_objectifs_v2';
-  static const String historiqueKey = 'neova_historique_v2';
-  static const String pinKey = 'neova_pin_v2';
-  static const String initializedKey = 'neova_initialized_v2';
+  static const String pinKey = 'neova_pin_v3';
+  static const String soldeKey = 'neova_solde_v3';
+  static const String objectifsKey = 'neova_objectifs_v3';
+  static const String historiqueKey = 'neova_historique_v3';
 
-  static Future<SharedPreferences> get prefs async {
+  static Future<SharedPreferences> get preferences async {
     return SharedPreferences.getInstance();
   }
 
-  static Future<void> save({
+  // ----------------------------------------------------------
+  // SAUVEGARDER PIN
+  // ----------------------------------------------------------
+
+  static Future<bool> savePin(String pin) async {
+    final p = await preferences;
+
+    final resultat = await p.setString(
+      pinKey,
+      pin,
+    );
+
+    await p.reload();
+
+    return resultat && p.getString(pinKey) == pin;
+  }
+
+  // ----------------------------------------------------------
+  // CHARGER PIN
+  // ----------------------------------------------------------
+
+  static Future<String?> loadPin() async {
+    final p = await preferences;
+
+    await p.reload();
+
+    return p.getString(pinKey);
+  }
+
+  // ----------------------------------------------------------
+  // SAUVEGARDER TOUTES LES DONNÉES
+  // ----------------------------------------------------------
+
+  static Future<bool> saveData({
     required int solde,
     required List<Objectif> objectifs,
     required List<Operation> historique,
   }) async {
-    final p = await prefs;
+    final p = await preferences;
 
-    await p.setInt(soldeKey, solde);
+    final objectifsJson = jsonEncode(
+      objectifs
+          .map((objectif) => objectif.toJson())
+          .toList(),
+    );
 
-    await p.setString(
+    final historiqueJson = jsonEncode(
+      historique
+          .map((operation) => operation.toJson())
+          .toList(),
+    );
+
+    final okSolde = await p.setInt(
+      soldeKey,
+      solde,
+    );
+
+    final okObjectifs = await p.setString(
       objectifsKey,
-      jsonEncode(
-        objectifs.map((e) => e.toJson()).toList(),
-      ),
+      objectifsJson,
     );
 
-    await p.setString(
+    final okHistorique = await p.setString(
       historiqueKey,
-      jsonEncode(
-        historique.map((e) => e.toJson()).toList(),
-      ),
+      historiqueJson,
     );
-
-    await p.setBool(initializedKey, true);
 
     await p.reload();
+
+    final verificationSolde =
+        p.getInt(soldeKey) == solde;
+
+    final verificationObjectifs =
+        p.getString(objectifsKey) == objectifsJson;
+
+    final verificationHistorique =
+        p.getString(historiqueKey) == historiqueJson;
+
+    return okSolde &&
+        okObjectifs &&
+        okHistorique &&
+        verificationSolde &&
+        verificationObjectifs &&
+        verificationHistorique;
   }
 
-  static Future<Map<String, dynamic>> load() async {
-    final p = await prefs;
+  // ----------------------------------------------------------
+  // CHARGER TOUTES LES DONNÉES
+  // ----------------------------------------------------------
+
+  static Future<Map<String, dynamic>> loadData() async {
+    final p = await preferences;
 
     await p.reload();
 
     int solde = p.getInt(soldeKey) ?? 75000;
 
-    List<Objectif> objectifs = [];
+    final List<Objectif> objectifs = [];
 
-    final objectifsString = p.getString(objectifsKey);
+    final objectifsJson =
+        p.getString(objectifsKey);
 
-    if (objectifsString != null &&
-        objectifsString.isNotEmpty) {
+    if (objectifsJson != null &&
+        objectifsJson.isNotEmpty) {
       try {
-        final data = jsonDecode(objectifsString);
+        final decoded = jsonDecode(objectifsJson);
 
-        if (data is List) {
-          objectifs = data
-              .map(
-                (e) => Objectif.fromJson(
-                  Map<String, dynamic>.from(e),
+        if (decoded is List) {
+          for (final element in decoded) {
+            if (element is Map) {
+              objectifs.add(
+                Objectif.fromJson(
+                  Map<String, dynamic>.from(element),
                 ),
-              )
-              .toList();
+              );
+            }
+          }
         }
       } catch (_) {}
     }
 
-    List<Operation> historique = [];
+    final List<Operation> historique = [];
 
-    final historiqueString = p.getString(historiqueKey);
+    final historiqueJson =
+        p.getString(historiqueKey);
 
-    if (historiqueString != null &&
-        historiqueString.isNotEmpty) {
+    if (historiqueJson != null &&
+        historiqueJson.isNotEmpty) {
       try {
-        final data = jsonDecode(historiqueString);
+        final decoded = jsonDecode(historiqueJson);
 
-        if (data is List) {
-          historique = data
-              .map(
-                (e) => Operation.fromJson(
-                  Map<String, dynamic>.from(e),
+        if (decoded is List) {
+          for (final element in decoded) {
+            if (element is Map) {
+              historique.add(
+                Operation.fromJson(
+                  Map<String, dynamic>.from(element),
                 ),
-              )
-              .toList();
+              );
+            }
+          }
         }
       } catch (_) {}
     }
@@ -217,18 +295,6 @@ class NeovaStorage {
       'objectifs': objectifs,
       'historique': historique,
     };
-  }
-
-  static Future<void> savePin(String pin) async {
-    final p = await prefs;
-    await p.setString(pinKey, pin);
-    await p.reload();
-  }
-
-  static Future<String?> loadPin() async {
-    final p = await prefs;
-    await p.reload();
-    return p.getString(pinKey);
   }
 }
 
@@ -245,7 +311,8 @@ class PinPage extends StatefulWidget {
 
 class _PinPageState extends State<PinPage> {
   final pinController = TextEditingController();
-  final confirmationController = TextEditingController();
+  final confirmationController =
+      TextEditingController();
 
   bool confirmation = false;
   bool chargement = true;
@@ -254,54 +321,86 @@ class _PinPageState extends State<PinPage> {
   @override
   void initState() {
     super.initState();
-    charger();
+    chargerPin();
   }
 
-  Future<void> charger() async {
-    final pin = await NeovaStorage.loadPin();
+  Future<void> chargerPin() async {
+    try {
+      final pin =
+          await NeovaStorage.loadPin();
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    setState(() {
-      pinEnregistre = pin;
-      chargement = false;
-    });
+      setState(() {
+        pinEnregistre = pin;
+        chargement = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        chargement = false;
+      });
+    }
   }
 
   void message(String texte) {
+    if (!mounted) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(texte)),
+      SnackBar(
+        content: Text(texte),
+      ),
     );
   }
 
   void continuer() {
-    final pin = pinController.text.trim();
+    final pin =
+        pinController.text.trim();
 
     if (!RegExp(r'^\d{4}$').hasMatch(pin)) {
-      message('Le PIN doit contenir 4 chiffres.');
+      message(
+        'Le PIN doit contenir exactement 4 chiffres.',
+      );
       return;
     }
 
     setState(() {
       confirmation = true;
+      confirmationController.clear();
     });
   }
 
   Future<void> confirmer() async {
-    final pin1 = pinController.text.trim();
-    final pin2 = confirmationController.text.trim();
+    final pin1 =
+        pinController.text.trim();
+
+    final pin2 =
+        confirmationController.text.trim();
 
     if (!RegExp(r'^\d{4}$').hasMatch(pin2)) {
-      message('Le PIN doit contenir 4 chiffres.');
+      message(
+        'Le PIN doit contenir exactement 4 chiffres.',
+      );
       return;
     }
 
     if (pin1 != pin2) {
-      message('Les PIN ne correspondent pas.');
+      message(
+        'Les deux PIN ne correspondent pas.',
+      );
       return;
     }
 
-    await NeovaStorage.savePin(pin1);
+    final sauvegarde =
+        await NeovaStorage.savePin(pin1);
+
+    if (!sauvegarde) {
+      message(
+        'Impossible de sauvegarder le PIN.',
+      );
+      return;
+    }
 
     if (!mounted) return;
 
@@ -314,14 +413,27 @@ class _PinPageState extends State<PinPage> {
   }
 
   Future<void> connecter() async {
-    final pin = pinController.text.trim();
+    final pin =
+        pinController.text.trim();
 
     if (!RegExp(r'^\d{4}$').hasMatch(pin)) {
-      message('Le PIN doit contenir 4 chiffres.');
+      message(
+        'Le PIN doit contenir exactement 4 chiffres.',
+      );
       return;
     }
 
-    if (pin != pinEnregistre) {
+    final pinActuel =
+        await NeovaStorage.loadPin();
+
+    if (pinActuel == null) {
+      message(
+        'Aucun PIN enregistré.',
+      );
+      return;
+    }
+
+    if (pin != pinActuel) {
       message('PIN incorrect.');
       return;
     }
@@ -353,7 +465,8 @@ class _PinPageState extends State<PinPage> {
       );
     }
 
-    final ancienUtilisateur = pinEnregistre != null;
+    final ancienUtilisateur =
+        pinEnregistre != null;
 
     final controller = confirmation
         ? confirmationController
@@ -368,7 +481,8 @@ class _PinPageState extends State<PinPage> {
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisAlignment:
+                MainAxisAlignment.center,
             children: [
               const Icon(
                 Icons.savings,
@@ -395,13 +509,17 @@ class _PinPageState extends State<PinPage> {
               const SizedBox(height: 30),
               TextField(
                 controller: controller,
-                keyboardType: TextInputType.number,
+                keyboardType:
+                    TextInputType.number,
                 obscureText: true,
                 maxLength: 4,
-                decoration: const InputDecoration(
+                decoration:
+                    const InputDecoration(
                   labelText: 'PIN',
-                  prefixIcon: Icon(Icons.lock),
-                  border: OutlineInputBorder(),
+                  prefixIcon:
+                      Icon(Icons.lock),
+                  border:
+                      OutlineInputBorder(),
                 ),
               ),
               const SizedBox(height: 15),
@@ -438,16 +556,19 @@ class NeovaHome extends StatefulWidget {
   const NeovaHome({super.key});
 
   @override
-  State<NeovaHome> createState() => _NeovaHomeState();
+  State<NeovaHome> createState() =>
+      _NeovaHomeState();
 }
 
-class _NeovaHomeState extends State<NeovaHome> {
+class _NeovaHomeState
+    extends State<NeovaHome> {
   int solde = 0;
 
   List<Objectif> objectifs = [];
   List<Operation> historique = [];
 
   bool chargement = true;
+  bool sauvegardeEnCours = false;
 
   @override
   void initState() {
@@ -456,42 +577,83 @@ class _NeovaHomeState extends State<NeovaHome> {
   }
 
   Future<void> chargerDonnees() async {
-    final data = await NeovaStorage.load();
+    try {
+      final data =
+          await NeovaStorage.loadData();
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    setState(() {
-      solde = data['solde'] as int;
-      objectifs = data['objectifs'] as List<Objectif>;
-      historique = data['historique'] as List<Operation>;
+      setState(() {
+        solde =
+            data['solde'] as int;
 
-      chargement = false;
-    });
+        objectifs =
+            data['objectifs']
+                as List<Objectif>;
+
+        historique =
+            data['historique']
+                as List<Operation>;
+
+        chargement = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        chargement = false;
+      });
+
+      message(
+        'Erreur lors du chargement des données.',
+      );
+    }
   }
 
-  Future<void> sauvegarder() async {
-    await NeovaStorage.save(
-      solde: solde,
-      objectifs: objectifs,
-      historique: historique,
-    );
+  Future<bool> sauvegarder() async {
+    if (sauvegardeEnCours) {
+      return false;
+    }
+
+    sauvegardeEnCours = true;
+
+    try {
+      final resultat =
+          await NeovaStorage.saveData(
+        solde: solde,
+        objectifs: objectifs,
+        historique: historique,
+      );
+
+      return resultat;
+    } finally {
+      sauvegardeEnCours = false;
+    }
   }
 
   int get epargneTotale {
     return objectifs.fold(
       0,
-      (total, objectif) => total + objectif.epargne,
+      (total, objectif) =>
+          total + objectif.epargne,
     );
   }
 
   String argent(int valeur) {
-    final texte = valeur.toString();
-    final resultat = StringBuffer();
+    final texte =
+        valeur.toString();
 
-    for (int i = 0; i < texte.length; i++) {
-      if (i > 0 && (texte.length - i) % 3 == 0) {
+    final resultat =
+        StringBuffer();
+
+    for (int i = 0;
+        i < texte.length;
+        i++) {
+      if (i > 0 &&
+          (texte.length - i) % 3 == 0) {
         resultat.write(' ');
       }
+
       resultat.write(texte[i]);
     }
 
@@ -505,13 +667,18 @@ class _NeovaHomeState extends State<NeovaHome> {
   }
 
   void message(String texte) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(texte)),
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+        .showSnackBar(
+      SnackBar(
+        content: Text(texte),
+      ),
     );
   }
 
   // ==========================================================
-  // AJOUTER
+  // AJOUTER ARGENT
   // ==========================================================
 
   Future<void> ajouterArgent() async {
@@ -529,9 +696,13 @@ class _NeovaHomeState extends State<NeovaHome> {
       );
     });
 
-    await sauvegarder();
+    final ok = await sauvegarder();
 
-    message('10 000 FCFA ajoutés et sauvegardés.');
+    message(
+      ok
+          ? '10 000 FCFA sauvegardés.'
+          : 'Erreur de sauvegarde.',
+    );
   }
 
   // ==========================================================
@@ -539,60 +710,99 @@ class _NeovaHomeState extends State<NeovaHome> {
   // ==========================================================
 
   Future<void> creerObjectif() async {
-    final nom = TextEditingController();
-    final cible = TextEditingController();
+    final nomController =
+        TextEditingController();
 
-    DateTime? date;
+    final cibleController =
+        TextEditingController();
+
+    DateTime? dateChoisie;
 
     await showDialog(
       context: context,
       builder: (dialogContext) {
         return StatefulBuilder(
-          builder: (context, setDialogState) {
+          builder: (
+            context,
+            setDialogState,
+          ) {
             return AlertDialog(
-              title: const Text('Nouvel objectif'),
-              content: SingleChildScrollView(
+              title: const Text(
+                'Nouvel objectif',
+              ),
+              content:
+                  SingleChildScrollView(
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisSize:
+                      MainAxisSize.min,
                   children: [
                     TextField(
-                      controller: nom,
-                      decoration: const InputDecoration(
-                        labelText: 'Nom',
-                        border: OutlineInputBorder(),
+                      controller:
+                          nomController,
+                      decoration:
+                          const InputDecoration(
+                        labelText:
+                            'Nom de l’objectif',
+                        border:
+                            OutlineInputBorder(),
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(
+                      height: 12,
+                    ),
                     TextField(
-                      controller: cible,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Montant cible',
-                        suffixText: 'FCFA',
-                        border: OutlineInputBorder(),
+                      controller:
+                          cibleController,
+                      keyboardType:
+                          TextInputType.number,
+                      decoration:
+                          const InputDecoration(
+                        labelText:
+                            'Montant cible',
+                        suffixText:
+                            'FCFA',
+                        border:
+                            OutlineInputBorder(),
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(
+                      height: 12,
+                    ),
                     OutlinedButton.icon(
-                      onPressed: () async {
-                        final choix = await showDatePicker(
-                          context: context,
-                          firstDate: DateTime.now(),
-                          lastDate: DateTime(2100),
-                          initialDate: DateTime.now(),
+                      onPressed:
+                          () async {
+                        final date =
+                            await showDatePicker(
+                          context:
+                              context,
+                          firstDate:
+                              DateTime.now(),
+                          lastDate:
+                              DateTime(
+                            2100,
+                          ),
+                          initialDate:
+                              DateTime.now(),
                         );
 
-                        if (choix != null) {
-                          setDialogState(() {
-                            date = choix;
-                          });
+                        if (date !=
+                            null) {
+                          setDialogState(
+                            () {
+                              dateChoisie =
+                                  date;
+                            },
+                          );
                         }
                       },
-                      icon: const Icon(Icons.calendar_month),
+                      icon: const Icon(
+                        Icons.calendar_month,
+                      ),
                       label: Text(
-                        date == null
+                        dateChoisie ==
+                                null
                             ? 'Choisir la date'
-                            : dateFormat(date!),
+                            : 'Déblocage : ${dateFormat(dateChoisie!)}',
                       ),
                     ),
                   ],
@@ -601,44 +811,73 @@ class _NeovaHomeState extends State<NeovaHome> {
               actions: [
                 TextButton(
                   onPressed: () {
-                    Navigator.pop(dialogContext);
+                    Navigator.pop(
+                      dialogContext,
+                    );
                   },
-                  child: const Text('Annuler'),
+                  child:
+                      const Text(
+                    'Annuler',
+                  ),
                 ),
                 ElevatedButton(
-                  onPressed: () async {
-                    final nomTexte = nom.text.trim();
-                    final cibleMontant =
-                        int.tryParse(cible.text.trim());
+                  onPressed:
+                      () async {
+                    final nom =
+                        nomController
+                            .text
+                            .trim();
 
-                    if (nomTexte.isEmpty ||
-                        cibleMontant == null ||
-                        cibleMontant <= 0 ||
-                        date == null) {
-                      message('Remplis toutes les informations.');
+                    final cible =
+                        int.tryParse(
+                      cibleController
+                          .text
+                          .trim(),
+                    );
+
+                    if (nom.isEmpty ||
+                        cible == null ||
+                        cible <= 0 ||
+                        dateChoisie ==
+                            null) {
+                      message(
+                        'Remplis toutes les informations.',
+                      );
                       return;
                     }
 
                     setState(() {
                       objectifs.add(
                         Objectif(
-                          nom: nomTexte,
-                          cible: cibleMontant,
+                          nom: nom,
+                          cible: cible,
                           epargne: 0,
-                          dateDeblocage: date!,
+                          dateDeblocage:
+                              dateChoisie!,
                         ),
                       );
                     });
 
-                    await sauvegarder();
+                    final ok =
+                        await sauvegarder();
 
-                    if (!mounted) return;
+                    if (!mounted)
+                      return;
 
-                    Navigator.pop(dialogContext);
+                    Navigator.pop(
+                      dialogContext,
+                    );
 
-                    message('Objectif sauvegardé.');
+                    message(
+                      ok
+                          ? 'Objectif sauvegardé.'
+                          : 'Objectif créé mais sauvegarde échouée.',
+                    );
                   },
-                  child: const Text('Créer'),
+                  child:
+                      const Text(
+                    'Créer',
+                  ),
                 ),
               ],
             );
@@ -647,85 +886,119 @@ class _NeovaHomeState extends State<NeovaHome> {
       },
     );
 
-    nom.dispose();
-    cible.dispose();
+    nomController.dispose();
+    cibleController.dispose();
   }
 
   // ==========================================================
   // EPARGNER
   // ==========================================================
 
-  Future<void> epargner(Objectif objectif) async {
-    final controller = TextEditingController();
+  Future<void> epargner(
+    Objectif objectif,
+  ) async {
+    final controller =
+        TextEditingController();
 
     await showDialog(
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: Text('Épargner pour ${objectif.nom}'),
+          title: Text(
+            'Épargner pour ${objectif.nom}',
+          ),
           content: TextField(
             controller: controller,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
+            keyboardType:
+                TextInputType.number,
+            decoration:
+                const InputDecoration(
               labelText: 'Montant',
               suffixText: 'FCFA',
-              border: OutlineInputBorder(),
+              border:
+                  OutlineInputBorder(),
             ),
           ),
           actions: [
             TextButton(
               onPressed: () {
-                Navigator.pop(dialogContext);
+                Navigator.pop(
+                  dialogContext,
+                );
               },
-              child: const Text('Annuler'),
+              child:
+                  const Text('Annuler'),
             ),
             ElevatedButton(
-              onPressed: () async {
+              onPressed:
+                  () async {
                 final montant =
-                    int.tryParse(controller.text.trim());
+                    int.tryParse(
+                  controller.text
+                      .trim(),
+                );
 
-                if (montant == null || montant <= 0) {
-                  message('Montant invalide.');
+                if (montant == null ||
+                    montant <= 0) {
+                  message(
+                    'Montant invalide.',
+                  );
                   return;
                 }
 
                 if (montant > solde) {
-                  message('Solde insuffisant.');
+                  message(
+                    'Solde insuffisant.',
+                  );
                   return;
                 }
 
-                if (objectif.epargne + montant >
+                if (objectif.epargne +
+                        montant >
                     objectif.cible) {
-                  message('La cible serait dépassée.');
+                  message(
+                    'La cible serait dépassée.',
+                  );
                   return;
                 }
 
                 setState(() {
                   solde -= montant;
-                  objectif.epargne += montant;
+
+                  objectif.epargne +=
+                      montant;
 
                   historique.insert(
                     0,
                     Operation(
-                      titre: 'Épargne : ${objectif.nom}',
+                      titre:
+                          'Épargne : ${objectif.nom}',
                       montant: montant,
                       positif: false,
-                      date: DateTime.now(),
+                      date:
+                          DateTime.now(),
                     ),
                   );
                 });
 
-                await sauvegarder();
+                final ok =
+                    await sauvegarder();
 
-                if (!mounted) return;
+                if (!mounted)
+                  return;
 
-                Navigator.pop(dialogContext);
+                Navigator.pop(
+                  dialogContext,
+                );
 
                 message(
-                  '${argent(montant)} sauvegardés.',
+                  ok
+                      ? '${argent(montant)} épargnés.'
+                      : 'Erreur de sauvegarde.',
                 );
               },
-              child: const Text('Épargner'),
+              child:
+                  const Text('Épargner'),
             ),
           ],
         );
@@ -739,27 +1012,36 @@ class _NeovaHomeState extends State<NeovaHome> {
   // RECUPERER
   // ==========================================================
 
-  Future<void> recuperer(Objectif objectif) async {
+  Future<void> recuperer(
+    Objectif objectif,
+  ) async {
     if (!objectif.debloque) {
-      message('Cet objectif est encore bloqué.');
+      message(
+        'Cet objectif est encore bloqué.',
+      );
       return;
     }
 
     if (objectif.epargne <= 0) {
-      message('Aucune épargne à récupérer.');
+      message(
+        'Aucune épargne à récupérer.',
+      );
       return;
     }
 
-    final montant = objectif.epargne;
+    final montant =
+        objectif.epargne;
 
     setState(() {
       solde += montant;
+
       objectif.epargne = 0;
 
       historique.insert(
         0,
         Operation(
-          titre: 'Récupération : ${objectif.nom}',
+          titre:
+              'Récupération : ${objectif.nom}',
           montant: montant,
           positif: true,
           date: DateTime.now(),
@@ -767,55 +1049,81 @@ class _NeovaHomeState extends State<NeovaHome> {
       );
     });
 
-    await sauvegarder();
+    final ok =
+        await sauvegarder();
 
-    message('${argent(montant)} récupérés et sauvegardés.');
+    message(
+      ok
+          ? '${argent(montant)} récupérés.'
+          : 'Erreur de sauvegarde.',
+    );
   }
 
   // ==========================================================
   // SUPPRIMER
   // ==========================================================
 
-  Future<void> supprimer(Objectif objectif) async {
-    final confirmer = await showDialog<bool>(
+  Future<void> supprimer(
+    Objectif objectif,
+  ) async {
+    final confirmer =
+        await showDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Supprimer ?'),
+          title: const Text(
+            'Supprimer l’objectif ?',
+          ),
           content: Text(
-            'Supprimer « ${objectif.nom} » ?',
+            'Voulez-vous supprimer '
+            '« ${objectif.nom} » ?',
           ),
           actions: [
             TextButton(
               onPressed: () {
-                Navigator.pop(context, false);
+                Navigator.pop(
+                  context,
+                  false,
+                );
               },
-              child: const Text('Annuler'),
+              child:
+                  const Text('Annuler'),
             ),
             ElevatedButton(
               onPressed: () {
-                Navigator.pop(context, true);
+                Navigator.pop(
+                  context,
+                  true,
+                );
               },
-              child: const Text('Supprimer'),
+              child:
+                  const Text('Supprimer'),
             ),
           ],
         );
       },
     );
 
-    if (confirmer == true) {
-      setState(() {
-        objectifs.remove(objectif);
-      });
-
-      await sauvegarder();
-
-      message('Objectif supprimé.');
+    if (confirmer != true) {
+      return;
     }
+
+    setState(() {
+      objectifs.remove(objectif);
+    });
+
+    final ok =
+        await sauvegarder();
+
+    message(
+      ok
+          ? 'Objectif supprimé.'
+          : 'Erreur de sauvegarde.',
+    );
   }
 
   // ==========================================================
-  // BUILD
+  // BUILD ACCUEIL
   // ==========================================================
 
   @override
@@ -823,7 +1131,8 @@ class _NeovaHomeState extends State<NeovaHome> {
     if (chargement) {
       return const Scaffold(
         body: Center(
-          child: CircularProgressIndicator(),
+          child:
+              CircularProgressIndicator(),
         ),
       );
     }
@@ -833,55 +1142,89 @@ class _NeovaHomeState extends State<NeovaHome> {
         title: const Text(
           'NÉOVA',
           style: TextStyle(
-            fontWeight: FontWeight.bold,
+            fontWeight:
+                FontWeight.bold,
           ),
         ),
         centerTitle: true,
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: creerObjectif,
-        icon: const Icon(Icons.add),
-        label: const Text('Objectif'),
+      floatingActionButton:
+          FloatingActionButton.extended(
+        onPressed:
+            creerObjectif,
+        icon: const Icon(
+          Icons.add,
+        ),
+        label: const Text(
+          'Objectif',
+        ),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding:
+            const EdgeInsets.all(16),
         children: [
           const Text(
             'Bonjour 👋',
             style: TextStyle(
               fontSize: 27,
-              fontWeight: FontWeight.bold,
+              fontWeight:
+                  FontWeight.bold,
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(
+            height: 6,
+          ),
           const Text(
             'Bienvenue dans ton espace NÉOVA.',
           ),
-          const SizedBox(height: 20),
+          const SizedBox(
+            height: 20,
+          ),
+
+          // SOLDE
 
           Card(
             child: Padding(
-              padding: const EdgeInsets.all(20),
+              padding:
+                  const EdgeInsets.all(
+                20,
+              ),
               child: Column(
                 crossAxisAlignment:
-                    CrossAxisAlignment.start,
+                    CrossAxisAlignment
+                        .start,
                 children: [
-                  const Text('Solde disponible'),
-                  const SizedBox(height: 8),
+                  const Text(
+                    'Solde disponible',
+                  ),
+                  const SizedBox(
+                    height: 8,
+                  ),
                   Text(
                     argent(solde),
-                    style: const TextStyle(
+                    style:
+                        const TextStyle(
                       fontSize: 31,
-                      fontWeight: FontWeight.bold,
+                      fontWeight:
+                          FontWeight.bold,
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(
+                    height: 16,
+                  ),
                   SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: ajouterArgent,
-                      icon: const Icon(Icons.add),
-                      label: const Text(
+                    width:
+                        double.infinity,
+                    child:
+                        ElevatedButton
+                            .icon(
+                      onPressed:
+                          ajouterArgent,
+                      icon: const Icon(
+                        Icons.add,
+                      ),
+                      label:
+                          const Text(
                         'Ajouter 10 000 FCFA',
                       ),
                     ),
@@ -891,41 +1234,77 @@ class _NeovaHomeState extends State<NeovaHome> {
             ),
           ),
 
-          const SizedBox(height: 15),
+          const SizedBox(
+            height: 15,
+          ),
+
+          // STATISTIQUES
 
           Row(
             children: [
               Expanded(
                 child: Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
+                  child:
+                      Padding(
+                    padding:
+                        const EdgeInsets
+                            .all(16),
+                    child:
+                        Column(
                       children: [
-                        const Icon(Icons.savings),
-                        const SizedBox(height: 8),
-                        const Text('Épargne'),
-                        const SizedBox(height: 5),
+                        const Icon(
+                          Icons.savings,
+                        ),
+                        const SizedBox(
+                          height: 8,
+                        ),
+                        const Text(
+                          'Épargne',
+                        ),
+                        const SizedBox(
+                          height: 5,
+                        ),
                         Text(
-                          argent(epargneTotale),
-                          textAlign: TextAlign.center,
+                          argent(
+                            epargneTotale,
+                          ),
+                          textAlign:
+                              TextAlign
+                                  .center,
                         ),
                       ],
                     ),
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(
+                width: 10,
+              ),
               Expanded(
                 child: Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
+                  child:
+                      Padding(
+                    padding:
+                        const EdgeInsets
+                            .all(16),
+                    child:
+                        Column(
                       children: [
-                        const Icon(Icons.flag),
-                        const SizedBox(height: 8),
-                        const Text('Objectifs'),
-                        const SizedBox(height: 5),
-                        Text('${objectifs.length}'),
+                        const Icon(
+                          Icons.flag,
+                        ),
+                        const SizedBox(
+                          height: 8,
+                        ),
+                        const Text(
+                          'Objectifs',
+                        ),
+                        const SizedBox(
+                          height: 5,
+                        ),
+                        Text(
+                          '${objectifs.length}',
+                        ),
                       ],
                     ),
                   ),
@@ -934,79 +1313,121 @@ class _NeovaHomeState extends State<NeovaHome> {
             ],
           ),
 
-          const SizedBox(height: 15),
+          const SizedBox(
+            height: 15,
+          ),
+
+          // OBJECTIFS
 
           Card(
             child: ListTile(
-              leading: const CircleAvatar(
-                child: Icon(Icons.flag),
-              ),
-              title: const Text(
-                'Mes objectifs',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
+              leading:
+                  const CircleAvatar(
+                child: Icon(
+                  Icons.flag,
                 ),
               ),
-              subtitle: const Text(
+              title:
+                  const Text(
+                'Mes objectifs',
+                style:
+                    TextStyle(
+                  fontWeight:
+                      FontWeight.bold,
+                ),
+              ),
+              subtitle:
+                  const Text(
                 'Voir et gérer mes objectifs',
               ),
-              trailing: const Icon(
-                Icons.arrow_forward_ios,
+              trailing:
+                  const Icon(
+                Icons
+                    .arrow_forward_ios,
               ),
               onTap: () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => ObjectifsPage(
-                      objectifs: objectifs,
-                      argent: argent,
-                      dateFormat: dateFormat,
-                      onSave: epargner,
-                      onRecover: recuperer,
-                      onDelete: supprimer,
-                      onCreate: creerObjectif,
+                    builder: (_) =>
+                        ObjectifsPage(
+                      objectifs:
+                          objectifs,
+                      argent:
+                          argent,
+                      dateFormat:
+                          dateFormat,
+                      onSave:
+                          epargner,
+                      onRecover:
+                          recuperer,
+                      onDelete:
+                          supprimer,
+                      onCreate:
+                          creerObjectif,
                     ),
                   ),
                 ).then((_) {
-                  setState(() {});
+                  if (mounted) {
+                    setState(
+                      () {},
+                    );
+                  }
                 });
               },
             ),
           ),
 
-          const SizedBox(height: 25),
+          const SizedBox(
+            height: 25,
+          ),
 
           const Text(
             'Dernières opérations',
             style: TextStyle(
               fontSize: 21,
-              fontWeight: FontWeight.bold,
+              fontWeight:
+                  FontWeight.bold,
             ),
           ),
 
-          const SizedBox(height: 10),
+          const SizedBox(
+            height: 10,
+          ),
 
           if (historique.isEmpty)
             const Card(
               child: Padding(
-                padding: EdgeInsets.all(20),
+                padding:
+                    EdgeInsets.all(
+                  20,
+                ),
                 child: Text(
                   'Aucune opération pour le moment.',
                 ),
               ),
             ),
 
-          ...historique.take(5).map(
+          ...historique
+              .take(5)
+              .map(
             (operation) {
               return Card(
-                child: ListTile(
-                  leading: Icon(
+                child:
+                    ListTile(
+                  leading:
+                      Icon(
                     operation.positif
-                        ? Icons.add_circle
-                        : Icons.savings,
+                        ? Icons
+                            .add_circle
+                        : Icons
+                            .savings,
                   ),
-                  title: Text(operation.titre),
-                  trailing: Text(
+                  title: Text(
+                    operation.titre,
+                  ),
+                  trailing:
+                      Text(
                     '${operation.positif ? '+' : '-'}'
                     '${argent(operation.montant)}',
                   ),
@@ -1015,7 +1436,9 @@ class _NeovaHomeState extends State<NeovaHome> {
             },
           ),
 
-          const SizedBox(height: 100),
+          const SizedBox(
+            height: 100,
+          ),
         ],
       ),
     );
@@ -1026,14 +1449,24 @@ class _NeovaHomeState extends State<NeovaHome> {
 // PAGE OBJECTIFS
 // ============================================================
 
-class ObjectifsPage extends StatefulWidget {
+class ObjectifsPage
+    extends StatefulWidget {
   final List<Objectif> objectifs;
-  final String Function(int) argent;
-  final String Function(DateTime) dateFormat;
-  final Future<void> Function() onCreate;
-  final Future<void> Function(Objectif) onSave;
-  final Future<void> Function(Objectif) onRecover;
-  final Future<void> Function(Objectif) onDelete;
+  final String Function(int)
+      argent;
+  final String Function(DateTime)
+      dateFormat;
+  final Future<void> Function()
+      onCreate;
+  final Future<void> Function(
+      Objectif)
+      onSave;
+  final Future<void> Function(
+      Objectif)
+      onRecover;
+  final Future<void> Function(
+      Objectif)
+      onDelete;
 
   const ObjectifsPage({
     super.key,
@@ -1047,16 +1480,21 @@ class ObjectifsPage extends StatefulWidget {
   });
 
   @override
-  State<ObjectifsPage> createState() => _ObjectifsPageState();
+  State<ObjectifsPage> createState() =>
+      _ObjectifsPageState();
 }
 
-class _ObjectifsPageState extends State<ObjectifsPage> {
-  Widget carte(Objectif objectif) {
+class _ObjectifsPageState
+    extends State<ObjectifsPage> {
+  Widget carte(
+    Objectif objectif,
+  ) {
     double progression = 0;
 
     if (objectif.cible > 0) {
       progression =
-          objectif.epargne / objectif.cible;
+          objectif.epargne /
+              objectif.cible;
 
       if (progression > 1) {
         progression = 1;
@@ -1064,63 +1502,115 @@ class _ObjectifsPageState extends State<ObjectifsPage> {
     }
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 14),
+      margin:
+          const EdgeInsets.only(
+        bottom: 14,
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding:
+            const EdgeInsets.all(
+          16,
+        ),
         child: Column(
           crossAxisAlignment:
-              CrossAxisAlignment.start,
+              CrossAxisAlignment
+                  .start,
           children: [
             Row(
               children: [
                 Icon(
                   objectif.debloque
-                      ? Icons.lock_open
+                      ? Icons
+                          .lock_open
                       : Icons.lock,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(
+                  width: 8,
+                ),
                 Expanded(
                   child: Text(
                     objectif.nom,
-                    style: const TextStyle(
+                    style:
+                        const TextStyle(
                       fontSize: 19,
-                      fontWeight: FontWeight.bold,
+                      fontWeight:
+                          FontWeight.bold,
                     ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+
+            const SizedBox(
+              height: 12,
+            ),
+
             Text(
               '${widget.argent(objectif.epargne)} / '
               '${widget.argent(objectif.cible)}',
             ),
-            const SizedBox(height: 10),
+
+            const SizedBox(
+              height: 10,
+            ),
+
             LinearProgressIndicator(
               value: progression,
             ),
-            const SizedBox(height: 10),
+
+            const SizedBox(
+              height: 10,
+            ),
+
             Text(
               'Déblocage : '
               '${widget.dateFormat(objectif.dateDeblocage)}',
             ),
-            const SizedBox(height: 12),
+
+            const SizedBox(
+              height: 12,
+            ),
+
             Wrap(
               spacing: 6,
               runSpacing: 6,
               children: [
                 ElevatedButton.icon(
-                  onPressed: () async {
-                    await widget.onSave(objectif);
-                    setState(() {});
+                  onPressed:
+                      () async {
+                    await widget
+                        .onSave(
+                      objectif,
+                    );
+
+                    if (mounted) {
+                      setState(
+                        () {},
+                      );
+                    }
                   },
-                  icon: const Icon(Icons.savings),
-                  label: const Text('Épargner'),
+                  icon: const Icon(
+                    Icons.savings,
+                  ),
+                  label:
+                      const Text(
+                    'Épargner',
+                  ),
                 ),
+
                 OutlinedButton(
-                  onPressed: () async {
-                    await widget.onRecover(objectif);
-                    setState(() {});
+                  onPressed:
+                      () async {
+                    await widget
+                        .onRecover(
+                      objectif,
+                    );
+
+                    if (mounted) {
+                      setState(
+                        () {},
+                      );
+                    }
                   },
                   child: Text(
                     objectif.debloque
@@ -1128,12 +1618,25 @@ class _ObjectifsPageState extends State<ObjectifsPage> {
                         : 'Bloqué',
                   ),
                 ),
+
                 OutlinedButton(
-                  onPressed: () async {
-                    await widget.onDelete(objectif);
-                    setState(() {});
+                  onPressed:
+                      () async {
+                    await widget
+                        .onDelete(
+                      objectif,
+                    );
+
+                    if (mounted) {
+                      setState(
+                        () {},
+                      );
+                    }
                   },
-                  child: const Text('Supprimer'),
+                  child:
+                      const Text(
+                    'Supprimer',
+                  ),
                 ),
               ],
             ),
@@ -1144,29 +1647,54 @@ class _ObjectifsPageState extends State<ObjectifsPage> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(
+    BuildContext context,
+  ) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Mes objectifs'),
+        title: const Text(
+          'Mes objectifs',
+        ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
+      floatingActionButton:
+          FloatingActionButton
+              .extended(
+        onPressed:
+            () async {
           await widget.onCreate();
-          setState(() {});
+
+          if (mounted) {
+            setState(
+              () {},
+            );
+          }
         },
-        icon: const Icon(Icons.add),
-        label: const Text('Nouvel objectif'),
+        icon: const Icon(
+          Icons.add,
+        ),
+        label: const Text(
+          'Nouvel objectif',
+        ),
       ),
-      body: widget.objectifs.isEmpty
+      body: widget
+              .objectifs
+              .isEmpty
           ? const Center(
               child: Text(
-                'Aucun objectif.',
-                textAlign: TextAlign.center,
+                'Aucun objectif.\n\n'
+                'Appuie sur « Nouvel objectif ».',
+                textAlign:
+                    TextAlign.center,
               ),
             )
           : ListView(
-              padding: const EdgeInsets.all(16),
-              children: widget.objectifs.map(carte).toList(),
+              padding:
+                  const EdgeInsets
+                      .all(16),
+              children: widget
+                  .objectifs
+                  .map(carte)
+                  .toList(),
             ),
     );
   }
