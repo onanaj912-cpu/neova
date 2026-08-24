@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const NeovaApp());
 }
 
@@ -21,6 +22,69 @@ class NeovaApp extends StatelessWidget {
       ),
       home: const PinPage(),
     );
+  }
+}
+
+// ============================================================
+// STOCKAGE NÉOVA
+// ============================================================
+
+class NeovaStorage {
+  static const String pinKey = 'neova_pin_v2';
+  static const String soldeKey = 'neova_solde_v2';
+  static const String objectifsKey = 'neova_objectifs_v2';
+  static const String historiqueKey = 'neova_historique_v2';
+  static const String initializedKey = 'neova_initialized_v2';
+
+  static final SharedPreferencesAsync _prefs =
+      SharedPreferencesAsync();
+
+  static Future<String?> getPin() async {
+    return await _prefs.getString(pinKey);
+  }
+
+  static Future<void> savePin(String pin) async {
+    await _prefs.setString(pinKey, pin);
+  }
+
+  static Future<void> saveData({
+    required int solde,
+    required List<Objectif> objectifs,
+    required List<Operation> historique,
+  }) async {
+    await _prefs.setInt(soldeKey, solde);
+
+    await _prefs.setString(
+      objectifsKey,
+      jsonEncode(
+        objectifs.map((e) => e.toJson()).toList(),
+      ),
+    );
+
+    await _prefs.setString(
+      historiqueKey,
+      jsonEncode(
+        historique.map((e) => e.toJson()).toList(),
+      ),
+    );
+
+    await _prefs.setBool(initializedKey, true);
+  }
+
+  static Future<bool> isInitialized() async {
+    return await _prefs.getBool(initializedKey) ?? false;
+  }
+
+  static Future<int?> getSolde() async {
+    return await _prefs.getInt(soldeKey);
+  }
+
+  static Future<String?> getObjectifs() async {
+    return await _prefs.getString(objectifsKey);
+  }
+
+  static Future<String?> getHistorique() async {
+    return await _prefs.getString(historiqueKey);
   }
 }
 
@@ -71,11 +135,10 @@ class Objectif {
   factory Objectif.fromJson(Map<String, dynamic> json) {
     return Objectif(
       nom: json['nom'] as String,
-      cible: json['cible'] as int,
-      epargne: json['epargne'] as int,
-      dateDeblocage: DateTime.parse(
-        json['dateDeblocage'] as String,
-      ),
+      cible: (json['cible'] as num).toInt(),
+      epargne: (json['epargne'] as num).toInt(),
+      dateDeblocage:
+          DateTime.parse(json['dateDeblocage'] as String),
     );
   }
 }
@@ -109,11 +172,9 @@ class Operation {
   factory Operation.fromJson(Map<String, dynamic> json) {
     return Operation(
       titre: json['titre'] as String,
-      montant: json['montant'] as int,
+      montant: (json['montant'] as num).toInt(),
       positif: json['positif'] as bool,
-      date: DateTime.parse(
-        json['date'] as String,
-      ),
+      date: DateTime.parse(json['date'] as String),
     );
   }
 }
@@ -169,52 +230,56 @@ class _NeovaHomeState extends State<NeovaHome> {
   // ==========================================================
 
   Future<void> chargerDonnees() async {
-    final prefs = await SharedPreferences.getInstance();
+    try {
+      final initialise =
+          await NeovaStorage.isInitialized();
 
-    final donneesInitialisees =
-        prefs.getBool('neova_donnees_initialisees') ?? false;
+      if (initialise) {
+        final soldeSauvegarde =
+            await NeovaStorage.getSolde();
 
-    if (donneesInitialisees) {
-      final soldeSauvegarde =
-          prefs.getInt('neova_solde');
+        final objectifsSauvegardes =
+            await NeovaStorage.getObjectifs();
 
-      final objectifsSauvegardes =
-          prefs.getString('neova_objectifs');
+        final historiqueSauvegarde =
+            await NeovaStorage.getHistorique();
 
-      final historiqueSauvegarde =
-          prefs.getString('neova_historique');
+        if (soldeSauvegarde != null) {
+          solde = soldeSauvegarde;
+        }
 
-      if (soldeSauvegarde != null) {
-        solde = soldeSauvegarde;
+        if (objectifsSauvegardes != null &&
+            objectifsSauvegardes.isNotEmpty) {
+          final List<dynamic> liste =
+              jsonDecode(objectifsSauvegardes);
+
+          objectifs = liste
+              .map(
+                (element) => Objectif.fromJson(
+                  Map<String, dynamic>.from(element),
+                ),
+              )
+              .toList();
+        }
+
+        if (historiqueSauvegarde != null &&
+            historiqueSauvegarde.isNotEmpty) {
+          final List<dynamic> liste =
+              jsonDecode(historiqueSauvegarde);
+
+          historique = liste
+              .map(
+                (element) => Operation.fromJson(
+                  Map<String, dynamic>.from(element),
+                ),
+              )
+              .toList();
+        }
+      } else {
+        await sauvegarderDonnees();
       }
-
-      if (objectifsSauvegardes != null) {
-        final List<dynamic> liste =
-            jsonDecode(objectifsSauvegardes);
-
-        objectifs = liste
-            .map(
-              (element) => Objectif.fromJson(
-                Map<String, dynamic>.from(element),
-              ),
-            )
-            .toList();
-      }
-
-      if (historiqueSauvegarde != null) {
-        final List<dynamic> liste =
-            jsonDecode(historiqueSauvegarde);
-
-        historique = liste
-            .map(
-              (element) => Operation.fromJson(
-                Map<String, dynamic>.from(element),
-              ),
-            )
-            .toList();
-      }
-    } else {
-      await sauvegarderDonnees();
+    } catch (e) {
+      debugPrint('Erreur chargement NÉOVA : $e');
     }
 
     if (!mounted) return;
@@ -225,39 +290,19 @@ class _NeovaHomeState extends State<NeovaHome> {
   }
 
   // ==========================================================
-  // SAUVEGARDER LES DONNÉES
+  // SAUVEGARDER
   // ==========================================================
 
   Future<void> sauvegarderDonnees() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    await prefs.setInt(
-      'neova_solde',
-      solde,
-    );
-
-    await prefs.setString(
-      'neova_objectifs',
-      jsonEncode(
-        objectifs
-            .map((objectif) => objectif.toJson())
-            .toList(),
-      ),
-    );
-
-    await prefs.setString(
-      'neova_historique',
-      jsonEncode(
-        historique
-            .map((operation) => operation.toJson())
-            .toList(),
-      ),
-    );
-
-    await prefs.setBool(
-      'neova_donnees_initialisees',
-      true,
-    );
+    try {
+      await NeovaStorage.saveData(
+        solde: solde,
+        objectifs: objectifs,
+        historique: historique,
+      );
+    } catch (e) {
+      debugPrint('Erreur sauvegarde NÉOVA : $e');
+    }
   }
 
   String argent(int valeur) {
@@ -282,6 +327,8 @@ class _NeovaHomeState extends State<NeovaHome> {
   }
 
   void message(String texte) {
+    if (!mounted) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(texte)),
     );
@@ -368,7 +415,8 @@ class _NeovaHomeState extends State<NeovaHome> {
                       label: Text(
                         dateChoisie == null
                             ? 'Choisir la date de déblocage'
-                            : 'Déblocage : ${dateFormat(dateChoisie!)}',
+                            : 'Déblocage : '
+                                '${dateFormat(dateChoisie!)}',
                       ),
                     ),
                   ],
@@ -383,7 +431,8 @@ class _NeovaHomeState extends State<NeovaHome> {
                 ),
                 ElevatedButton(
                   onPressed: () async {
-                    final nom = nomController.text.trim();
+                    final nom =
+                        nomController.text.trim();
 
                     final cible = int.tryParse(
                       cibleController.text.trim(),
@@ -411,6 +460,8 @@ class _NeovaHomeState extends State<NeovaHome> {
                     });
 
                     await sauvegarderDonnees();
+
+                    if (!mounted) return;
 
                     Navigator.pop(dialogContext);
                     message('Objectif créé.');
@@ -497,6 +548,8 @@ class _NeovaHomeState extends State<NeovaHome> {
                 });
 
                 await sauvegarderDonnees();
+
+                if (!mounted) return;
 
                 Navigator.pop(dialogContext);
 
@@ -596,7 +649,7 @@ class _NeovaHomeState extends State<NeovaHome> {
   }
 
   // ==========================================================
-  // PAGE ACCUEIL
+  // ACCUEIL
   // ==========================================================
 
   @override
@@ -638,13 +691,9 @@ class _NeovaHomeState extends State<NeovaHome> {
           const SizedBox(height: 6),
           const Text(
             'Bienvenue dans ton espace NÉOVA.',
-            style: TextStyle(
-              fontSize: 16,
-            ),
+            style: TextStyle(fontSize: 16),
           ),
           const SizedBox(height: 20),
-
-          // SOLDE
 
           Card(
             child: Padding(
@@ -655,9 +704,7 @@ class _NeovaHomeState extends State<NeovaHome> {
                 children: [
                   const Text(
                     'Solde disponible',
-                    style: TextStyle(
-                      fontSize: 16,
-                    ),
+                    style: TextStyle(fontSize: 16),
                   ),
                   const SizedBox(height: 8),
                   Text(
@@ -684,8 +731,6 @@ class _NeovaHomeState extends State<NeovaHome> {
           ),
 
           const SizedBox(height: 15),
-
-          // STATISTIQUES
 
           Row(
             children: [
@@ -732,7 +777,6 @@ class _NeovaHomeState extends State<NeovaHome> {
                           '${objectifs.length}',
                           style: const TextStyle(
                             fontWeight: FontWeight.bold,
-
                           ),
                         ),
                       ],
@@ -744,8 +788,6 @@ class _NeovaHomeState extends State<NeovaHome> {
           ),
 
           const SizedBox(height: 15),
-
-          // ACCÈS OBJECTIFS
 
           Card(
             child: ListTile(
@@ -779,7 +821,9 @@ class _NeovaHomeState extends State<NeovaHome> {
                     ),
                   ),
                 ).then((_) {
-                  setState(() {});
+                  if (mounted) {
+                    setState(() {});
+                  }
                 });
               },
             ),
@@ -928,7 +972,7 @@ class _ObjectifsPageState
                 ElevatedButton.icon(
                   onPressed: () async {
                     await widget.onSave(objectif);
-                    setState(() {});
+                    if (mounted) setState(() {});
                   },
                   icon: const Icon(Icons.savings),
                   label: const Text('Épargner'),
@@ -936,7 +980,7 @@ class _ObjectifsPageState
                 OutlinedButton(
                   onPressed: () async {
                     await widget.onRecover(objectif);
-                    setState(() {});
+                    if (mounted) setState(() {});
                   },
                   child: Text(
                     objectif.debloque
@@ -947,7 +991,7 @@ class _ObjectifsPageState
                 OutlinedButton(
                   onPressed: () async {
                     await widget.onDelete(objectif);
-                    setState(() {});
+                    if (mounted) setState(() {});
                   },
                   child: const Text('Supprimer'),
                 ),
@@ -969,7 +1013,7 @@ class _ObjectifsPageState
           FloatingActionButton.extended(
         onPressed: () async {
           await widget.onCreate();
-          setState(() {});
+          if (mounted) setState(() {});
         },
         icon: const Icon(Icons.add),
         label: const Text('Nouvel objectif'),
@@ -980,9 +1024,7 @@ class _ObjectifsPageState
                 'Aucun objectif.\n\n'
                 'Appuie sur « Nouvel objectif ».',
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 17,
-                ),
+                style: TextStyle(fontSize: 17),
               ),
             )
           : ListView(
@@ -1022,38 +1064,51 @@ class _PinPageState extends State<PinPage> {
   }
 
   // ==========================================================
-  // CHARGER LE PIN
+  // CHARGER PIN
   // ==========================================================
 
   Future<void> chargerPin() async {
-    final prefs =
-        await SharedPreferences.getInstance();
+    try {
+      final pin = await NeovaStorage.getPin();
 
-    final pin = prefs.getString('neova_pin');
+      if (!mounted) return;
 
-    if (!mounted) return;
+      setState(() {
+        pinEnregistre = pin;
+        chargement = false;
+      });
+    } catch (e) {
+      debugPrint('Erreur chargement PIN : $e');
 
-    setState(() {
-      pinEnregistre = pin;
-      chargement = false;
-    });
+      if (!mounted) return;
+
+      setState(() {
+        chargement = false;
+      });
+    }
   }
 
   // ==========================================================
-  // SAUVEGARDER LE PIN
+  // SAUVEGARDER PIN
   // ==========================================================
 
   Future<void> sauvegarderPin(String pin) async {
-    final prefs =
-        await SharedPreferences.getInstance();
+    await NeovaStorage.savePin(pin);
 
-    await prefs.setString(
-      'neova_pin',
-      pin,
-    );
+    // Vérification immédiate de l'écriture.
+    final verification =
+        await NeovaStorage.getPin();
+
+    if (verification != pin) {
+      throw Exception(
+        'Le PIN n’a pas pu être sauvegardé.',
+      );
+    }
   }
 
   void message(String texte) {
+    if (!mounted) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(texte)),
     );
@@ -1080,12 +1135,11 @@ class _PinPageState extends State<PinPage> {
   }
 
   // ==========================================================
-  // CONFIRMER LE PREMIER PIN
+  // CONFIRMER PIN
   // ==========================================================
 
   Future<void> confirmer() async {
     final pin1 = pinController.text.trim();
-
     final pin2 =
         confirmationController.text.trim();
 
@@ -1104,20 +1158,27 @@ class _PinPageState extends State<PinPage> {
       return;
     }
 
-    await sauvegarderPin(pin1);
+    try {
+      await sauvegarderPin(pin1);
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const NeovaHome(),
-      ),
-    );
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const NeovaHome(),
+        ),
+      );
+    } catch (e) {
+      message(
+        'Impossible de sauvegarder le PIN.',
+      );
+      debugPrint('Erreur PIN : $e');
+    }
   }
 
   // ==========================================================
-  // CONNEXION AVEC PIN EXISTANT
+  // CONNEXION
   // ==========================================================
 
   Future<void> connecter() async {
