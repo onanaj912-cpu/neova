@@ -1,5 +1,4 @@
 import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -43,12 +42,12 @@ class Objectif {
   });
 
   bool get debloque {
-    final now = DateTime.now();
+    final maintenant = DateTime.now();
 
     final aujourdHui = DateTime(
-      now.year,
-      now.month,
-      now.day,
+      maintenant.year,
+      maintenant.month,
+      maintenant.day,
     );
 
     final date = DateTime(
@@ -126,91 +125,308 @@ class Operation {
 // ============================================================
 
 class NeovaStorage {
-  static const String pinKey = 'neova_pin';
-  static const String soldeKey = 'neova_solde';
-  static const String objectifsKey = 'neova_objectifs';
-  static const String historiqueKey = 'neova_historique';
-  static const String initializedKey = 'neova_donnees_initialisees';
+  static const String soldeKey = 'neova_solde_v2';
+  static const String objectifsKey = 'neova_objectifs_v2';
+  static const String historiqueKey = 'neova_historique_v2';
+  static const String pinKey = 'neova_pin_v2';
+  static const String initializedKey = 'neova_initialized_v2';
 
-  static Future<SharedPreferences> ouvrir() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    // Force Android à relire les données présentes sur le stockage.
-    await prefs.reload();
-
-    return prefs;
+  static Future<SharedPreferences> get prefs async {
+    return SharedPreferences.getInstance();
   }
 
-  static Future<bool> sauvegarderPin(String pin) async {
-    final prefs = await ouvrir();
-    final resultat = await prefs.setString(pinKey, pin);
-    await prefs.reload();
-
-    return resultat && prefs.getString(pinKey) == pin;
-  }
-
-  static Future<String?> chargerPin() async {
-    final prefs = await ouvrir();
-    return prefs.getString(pinKey);
-  }
-
-  static Future<bool> sauvegarderDonnees({
+  static Future<void> save({
     required int solde,
     required List<Objectif> objectifs,
     required List<Operation> historique,
   }) async {
-    final prefs = await ouvrir();
+    final p = await prefs;
 
-    final objectifsJson = jsonEncode(
-      objectifs.map((o) => o.toJson()).toList(),
-    );
+    await p.setInt(soldeKey, solde);
 
-    final historiqueJson = jsonEncode(
-      historique.map((o) => o.toJson()).toList(),
-    );
-
-    final okSolde = await prefs.setInt(
-      soldeKey,
-      solde,
-    );
-
-    final okObjectifs = await prefs.setString(
+    await p.setString(
       objectifsKey,
-      objectifsJson,
+      jsonEncode(
+        objectifs.map((e) => e.toJson()).toList(),
+      ),
     );
 
-    final okHistorique = await prefs.setString(
+    await p.setString(
       historiqueKey,
-      historiqueJson,
+      jsonEncode(
+        historique.map((e) => e.toJson()).toList(),
+      ),
     );
 
-    final okInitialise = await prefs.setBool(
-      initializedKey,
-      true,
+    await p.setBool(initializedKey, true);
+
+    await p.reload();
+  }
+
+  static Future<Map<String, dynamic>> load() async {
+    final p = await prefs;
+
+    await p.reload();
+
+    int solde = p.getInt(soldeKey) ?? 75000;
+
+    List<Objectif> objectifs = [];
+
+    final objectifsString = p.getString(objectifsKey);
+
+    if (objectifsString != null &&
+        objectifsString.isNotEmpty) {
+      try {
+        final data = jsonDecode(objectifsString);
+
+        if (data is List) {
+          objectifs = data
+              .map(
+                (e) => Objectif.fromJson(
+                  Map<String, dynamic>.from(e),
+                ),
+              )
+              .toList();
+        }
+      } catch (_) {}
+    }
+
+    List<Operation> historique = [];
+
+    final historiqueString = p.getString(historiqueKey);
+
+    if (historiqueString != null &&
+        historiqueString.isNotEmpty) {
+      try {
+        final data = jsonDecode(historiqueString);
+
+        if (data is List) {
+          historique = data
+              .map(
+                (e) => Operation.fromJson(
+                  Map<String, dynamic>.from(e),
+                ),
+              )
+              .toList();
+        }
+      } catch (_) {}
+    }
+
+    return {
+      'solde': solde,
+      'objectifs': objectifs,
+      'historique': historique,
+    };
+  }
+
+  static Future<void> savePin(String pin) async {
+    final p = await prefs;
+    await p.setString(pinKey, pin);
+    await p.reload();
+  }
+
+  static Future<String?> loadPin() async {
+    final p = await prefs;
+    await p.reload();
+    return p.getString(pinKey);
+  }
+}
+
+// ============================================================
+// PIN
+// ============================================================
+
+class PinPage extends StatefulWidget {
+  const PinPage({super.key});
+
+  @override
+  State<PinPage> createState() => _PinPageState();
+}
+
+class _PinPageState extends State<PinPage> {
+  final pinController = TextEditingController();
+  final confirmationController = TextEditingController();
+
+  bool confirmation = false;
+  bool chargement = true;
+  String? pinEnregistre;
+
+  @override
+  void initState() {
+    super.initState();
+    charger();
+  }
+
+  Future<void> charger() async {
+    final pin = await NeovaStorage.loadPin();
+
+    if (!mounted) return;
+
+    setState(() {
+      pinEnregistre = pin;
+      chargement = false;
+    });
+  }
+
+  void message(String texte) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(texte)),
     );
+  }
 
-    await prefs.reload();
+  void continuer() {
+    final pin = pinController.text.trim();
 
-    final verificationSolde =
-        prefs.getInt(soldeKey) == solde;
+    if (!RegExp(r'^\d{4}$').hasMatch(pin)) {
+      message('Le PIN doit contenir 4 chiffres.');
+      return;
+    }
 
-    final verificationObjectifs =
-        prefs.getString(objectifsKey) == objectifsJson;
+    setState(() {
+      confirmation = true;
+    });
+  }
 
-    final verificationHistorique =
-        prefs.getString(historiqueKey) == historiqueJson;
+  Future<void> confirmer() async {
+    final pin1 = pinController.text.trim();
+    final pin2 = confirmationController.text.trim();
 
-    final verificationInitialise =
-        prefs.getBool(initializedKey) == true;
+    if (!RegExp(r'^\d{4}$').hasMatch(pin2)) {
+      message('Le PIN doit contenir 4 chiffres.');
+      return;
+    }
 
-    return okSolde &&
-        okObjectifs &&
-        okHistorique &&
-        okInitialise &&
-        verificationSolde &&
-        verificationObjectifs &&
-        verificationHistorique &&
-        verificationInitialise;
+    if (pin1 != pin2) {
+      message('Les PIN ne correspondent pas.');
+      return;
+    }
+
+    await NeovaStorage.savePin(pin1);
+
+    if (!mounted) return;
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const NeovaHome(),
+      ),
+    );
+  }
+
+  Future<void> connecter() async {
+    final pin = pinController.text.trim();
+
+    if (!RegExp(r'^\d{4}$').hasMatch(pin)) {
+      message('Le PIN doit contenir 4 chiffres.');
+      return;
+    }
+
+    if (pin != pinEnregistre) {
+      message('PIN incorrect.');
+      return;
+    }
+
+    if (!mounted) return;
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const NeovaHome(),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    pinController.dispose();
+    confirmationController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (chargement) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    final ancienUtilisateur = pinEnregistre != null;
+
+    final controller = confirmation
+        ? confirmationController
+        : pinController;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('NÉOVA'),
+        centerTitle: true,
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(
+                Icons.savings,
+                size: 80,
+              ),
+              const SizedBox(height: 25),
+              const Text(
+                'Bienvenue sur NÉOVA',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                ancienUtilisateur
+                    ? 'Entre ton PIN pour accéder à NÉOVA'
+                    : confirmation
+                        ? 'Confirme ton PIN'
+                        : 'Crée ton PIN à 4 chiffres',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 30),
+              TextField(
+                controller: controller,
+                keyboardType: TextInputType.number,
+                obscureText: true,
+                maxLength: 4,
+                decoration: const InputDecoration(
+                  labelText: 'PIN',
+                  prefixIcon: Icon(Icons.lock),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 15),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: ancienUtilisateur
+                      ? connecter
+                      : confirmation
+                          ? confirmer
+                          : continuer,
+                  child: Text(
+                    ancienUtilisateur
+                        ? 'Accéder'
+                        : confirmation
+                            ? 'Confirmer'
+                            : 'Continuer',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -226,33 +442,12 @@ class NeovaHome extends StatefulWidget {
 }
 
 class _NeovaHomeState extends State<NeovaHome> {
-  int solde = 75000;
+  int solde = 0;
 
-  List<Objectif> objectifs = [
-    Objectif(
-      nom: 'Téléphone',
-      cible: 150000,
-      epargne: 90000,
-      dateDeblocage: DateTime(2026, 12, 30),
-    ),
-    Objectif(
-      nom: 'Maison',
-      cible: 1000000,
-      epargne: 150000,
-      dateDeblocage: DateTime(2028, 12, 30),
-    ),
-  ];
-
+  List<Objectif> objectifs = [];
   List<Operation> historique = [];
 
   bool chargement = true;
-
-  int get epargneTotale {
-    return objectifs.fold(
-      0,
-      (total, objectif) => total + objectif.epargne,
-    );
-  }
 
   @override
   void initState() {
@@ -260,84 +455,33 @@ class _NeovaHomeState extends State<NeovaHome> {
     chargerDonnees();
   }
 
-  // ==========================================================
-  // CHARGER
-  // ==========================================================
-
   Future<void> chargerDonnees() async {
-    try {
-      final prefs = await NeovaStorage.ouvrir();
-
-      final soldeSauvegarde =
-          prefs.getInt(NeovaStorage.soldeKey);
-
-      final objectifsSauvegardes =
-          prefs.getString(NeovaStorage.objectifsKey);
-
-      final historiqueSauvegarde =
-          prefs.getString(NeovaStorage.historiqueKey);
-
-      if (soldeSauvegarde != null) {
-        solde = soldeSauvegarde;
-      }
-
-      if (objectifsSauvegardes != null &&
-          objectifsSauvegardes.isNotEmpty) {
-        final decoded =
-            jsonDecode(objectifsSauvegardes);
-
-        if (decoded is List) {
-          objectifs = decoded
-              .map(
-                (element) => Objectif.fromJson(
-                  Map<String, dynamic>.from(element),
-                ),
-              )
-              .toList();
-        }
-      }
-
-      if (historiqueSauvegarde != null &&
-          historiqueSauvegarde.isNotEmpty) {
-        final decoded =
-            jsonDecode(historiqueSauvegarde);
-
-        if (decoded is List) {
-          historique = decoded
-              .map(
-                (element) => Operation.fromJson(
-                  Map<String, dynamic>.from(element),
-                ),
-              )
-              .toList();
-        }
-      }
-    } catch (_) {
-      // Les valeurs par défaut restent disponibles
-      // si les anciennes données sont illisibles.
-    }
+    final data = await NeovaStorage.load();
 
     if (!mounted) return;
 
     setState(() {
+      solde = data['solde'] as int;
+      objectifs = data['objectifs'] as List<Objectif>;
+      historique = data['historique'] as List<Operation>;
+
       chargement = false;
     });
   }
 
-  // ==========================================================
-  // SAUVEGARDER
-  // ==========================================================
+  Future<void> sauvegarder() async {
+    await NeovaStorage.save(
+      solde: solde,
+      objectifs: objectifs,
+      historique: historique,
+    );
+  }
 
-  Future<bool> sauvegarder() async {
-    try {
-      return await NeovaStorage.sauvegarderDonnees(
-        solde: solde,
-        objectifs: objectifs,
-        historique: historique,
-      );
-    } catch (_) {
-      return false;
-    }
+  int get epargneTotale {
+    return objectifs.fold(
+      0,
+      (total, objectif) => total + objectif.epargne,
+    );
   }
 
   String argent(int valeur) {
@@ -348,7 +492,6 @@ class _NeovaHomeState extends State<NeovaHome> {
       if (i > 0 && (texte.length - i) % 3 == 0) {
         resultat.write(' ');
       }
-
       resultat.write(texte[i]);
     }
 
@@ -362,15 +505,13 @@ class _NeovaHomeState extends State<NeovaHome> {
   }
 
   void message(String texte) {
-    if (!mounted) return;
-
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(texte)),
     );
   }
 
   // ==========================================================
-  // AJOUTER ARGENT
+  // AJOUTER
   // ==========================================================
 
   Future<void> ajouterArgent() async {
@@ -388,24 +529,20 @@ class _NeovaHomeState extends State<NeovaHome> {
       );
     });
 
-    final ok = await sauvegarder();
+    await sauvegarder();
 
-    if (ok) {
-      message('10 000 FCFA ajoutés et sauvegardés.');
-    } else {
-      message('Erreur lors de la sauvegarde.');
-    }
+    message('10 000 FCFA ajoutés et sauvegardés.');
   }
 
   // ==========================================================
-  // CRÉER OBJECTIF
+  // CREER OBJECTIF
   // ==========================================================
 
   Future<void> creerObjectif() async {
-    final nomController = TextEditingController();
-    final cibleController = TextEditingController();
+    final nom = TextEditingController();
+    final cible = TextEditingController();
 
-    DateTime? dateChoisie;
+    DateTime? date;
 
     await showDialog(
       context: context,
@@ -419,15 +556,15 @@ class _NeovaHomeState extends State<NeovaHome> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     TextField(
-                      controller: nomController,
+                      controller: nom,
                       decoration: const InputDecoration(
-                        labelText: 'Nom de l’objectif',
+                        labelText: 'Nom',
                         border: OutlineInputBorder(),
                       ),
                     ),
                     const SizedBox(height: 12),
                     TextField(
-                      controller: cibleController,
+                      controller: cible,
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(
                         labelText: 'Montant cible',
@@ -438,27 +575,24 @@ class _NeovaHomeState extends State<NeovaHome> {
                     const SizedBox(height: 12),
                     OutlinedButton.icon(
                       onPressed: () async {
-                        final date = await showDatePicker(
+                        final choix = await showDatePicker(
                           context: context,
                           firstDate: DateTime.now(),
                           lastDate: DateTime(2100),
                           initialDate: DateTime.now(),
                         );
 
-                        if (date != null) {
+                        if (choix != null) {
                           setDialogState(() {
-                            dateChoisie = date;
+                            date = choix;
                           });
                         }
                       },
-                      icon: const Icon(
-                        Icons.calendar_month,
-                      ),
+                      icon: const Icon(Icons.calendar_month),
                       label: Text(
-                        dateChoisie == null
+                        date == null
                             ? 'Choisir la date'
-                            : 'Déblocage : '
-                                '${dateFormat(dateChoisie!)}',
+                            : dateFormat(date!),
                       ),
                     ),
                   ],
@@ -473,45 +607,36 @@ class _NeovaHomeState extends State<NeovaHome> {
                 ),
                 ElevatedButton(
                   onPressed: () async {
-                    final nom =
-                        nomController.text.trim();
+                    final nomTexte = nom.text.trim();
+                    final cibleMontant =
+                        int.tryParse(cible.text.trim());
 
-                    final cible = int.tryParse(
-                      cibleController.text.trim(),
-                    );
-
-                    if (nom.isEmpty ||
-                        cible == null ||
-                        cible <= 0 ||
-                        dateChoisie == null) {
-                      message(
-                        'Remplis toutes les informations.',
-                      );
+                    if (nomTexte.isEmpty ||
+                        cibleMontant == null ||
+                        cibleMontant <= 0 ||
+                        date == null) {
+                      message('Remplis toutes les informations.');
                       return;
                     }
 
                     setState(() {
                       objectifs.add(
                         Objectif(
-                          nom: nom,
-                          cible: cible,
+                          nom: nomTexte,
+                          cible: cibleMontant,
                           epargne: 0,
-                          dateDeblocage: dateChoisie!,
+                          dateDeblocage: date!,
                         ),
                       );
                     });
 
-                    final ok = await sauvegarder();
+                    await sauvegarder();
 
-                    if (!context.mounted) return;
+                    if (!mounted) return;
 
                     Navigator.pop(dialogContext);
 
-                    message(
-                      ok
-                          ? 'Objectif créé et sauvegardé.'
-                          : 'Objectif créé, mais erreur de sauvegarde.',
-                    );
+                    message('Objectif sauvegardé.');
                   },
                   child: const Text('Créer'),
                 ),
@@ -522,12 +647,12 @@ class _NeovaHomeState extends State<NeovaHome> {
       },
     );
 
-    nomController.dispose();
-    cibleController.dispose();
+    nom.dispose();
+    cible.dispose();
   }
 
   // ==========================================================
-  // ÉPARGNER
+  // EPARGNER
   // ==========================================================
 
   Future<void> epargner(Objectif objectif) async {
@@ -537,9 +662,7 @@ class _NeovaHomeState extends State<NeovaHome> {
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: Text(
-            'Épargner pour ${objectif.nom}',
-          ),
+          title: Text('Épargner pour ${objectif.nom}'),
           content: TextField(
             controller: controller,
             keyboardType: TextInputType.number,
@@ -558,9 +681,8 @@ class _NeovaHomeState extends State<NeovaHome> {
             ),
             ElevatedButton(
               onPressed: () async {
-                final montant = int.tryParse(
-                  controller.text.trim(),
-                );
+                final montant =
+                    int.tryParse(controller.text.trim());
 
                 if (montant == null || montant <= 0) {
                   message('Montant invalide.');
@@ -585,8 +707,7 @@ class _NeovaHomeState extends State<NeovaHome> {
                   historique.insert(
                     0,
                     Operation(
-                      titre:
-                          'Épargne : ${objectif.nom}',
+                      titre: 'Épargne : ${objectif.nom}',
                       montant: montant,
                       positif: false,
                       date: DateTime.now(),
@@ -594,16 +715,14 @@ class _NeovaHomeState extends State<NeovaHome> {
                   );
                 });
 
-                final ok = await sauvegarder();
+                await sauvegarder();
 
-                if (!context.mounted) return;
+                if (!mounted) return;
 
                 Navigator.pop(dialogContext);
 
                 message(
-                  ok
-                      ? '${argent(montant)} épargnés et sauvegardés.'
-                      : 'Erreur lors de la sauvegarde.',
+                  '${argent(montant)} sauvegardés.',
                 );
               },
               child: const Text('Épargner'),
@@ -617,7 +736,7 @@ class _NeovaHomeState extends State<NeovaHome> {
   }
 
   // ==========================================================
-  // RÉCUPÉRER
+  // RECUPERER
   // ==========================================================
 
   Future<void> recuperer(Objectif objectif) async {
@@ -626,7 +745,7 @@ class _NeovaHomeState extends State<NeovaHome> {
       return;
     }
 
-    if (objectif.epargne == 0) {
+    if (objectif.epargne <= 0) {
       message('Aucune épargne à récupérer.');
       return;
     }
@@ -648,13 +767,9 @@ class _NeovaHomeState extends State<NeovaHome> {
       );
     });
 
-    final ok = await sauvegarder();
+    await sauvegarder();
 
-    message(
-      ok
-          ? '${argent(montant)} récupérés et sauvegardés.'
-          : 'Erreur lors de la sauvegarde.',
-    );
+    message('${argent(montant)} récupérés et sauvegardés.');
   }
 
   // ==========================================================
@@ -664,24 +779,22 @@ class _NeovaHomeState extends State<NeovaHome> {
   Future<void> supprimer(Objectif objectif) async {
     final confirmer = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) {
+      builder: (context) {
         return AlertDialog(
-          title: const Text(
-            'Supprimer l’objectif ?',
-          ),
+          title: const Text('Supprimer ?'),
           content: Text(
-            'Voulez-vous supprimer « ${objectif.nom} » ?',
+            'Supprimer « ${objectif.nom} » ?',
           ),
           actions: [
             TextButton(
               onPressed: () {
-                Navigator.pop(dialogContext, false);
+                Navigator.pop(context, false);
               },
               child: const Text('Annuler'),
             ),
             ElevatedButton(
               onPressed: () {
-                Navigator.pop(dialogContext, true);
+                Navigator.pop(context, true);
               },
               child: const Text('Supprimer'),
             ),
@@ -690,23 +803,19 @@ class _NeovaHomeState extends State<NeovaHome> {
       },
     );
 
-    if (confirmer != true) return;
+    if (confirmer == true) {
+      setState(() {
+        objectifs.remove(objectif);
+      });
 
-    setState(() {
-      objectifs.remove(objectif);
-    });
+      await sauvegarder();
 
-    final ok = await sauvegarder();
-
-    message(
-      ok
-          ? 'Objectif supprimé et sauvegardé.'
-          : 'Erreur lors de la sauvegarde.',
-    );
+      message('Objectif supprimé.');
+    }
   }
 
   // ==========================================================
-  // BUILD ACCUEIL
+  // BUILD
   // ==========================================================
 
   @override
@@ -729,8 +838,7 @@ class _NeovaHomeState extends State<NeovaHome> {
         ),
         centerTitle: true,
       ),
-      floatingActionButton:
-          FloatingActionButton.extended(
+      floatingActionButton: FloatingActionButton.extended(
         onPressed: creerObjectif,
         icon: const Icon(Icons.add),
         label: const Text('Objectif'),
@@ -748,7 +856,6 @@ class _NeovaHomeState extends State<NeovaHome> {
           const SizedBox(height: 6),
           const Text(
             'Bienvenue dans ton espace NÉOVA.',
-            style: TextStyle(fontSize: 16),
           ),
           const SizedBox(height: 20),
 
@@ -794,19 +901,13 @@ class _NeovaHomeState extends State<NeovaHome> {
                     padding: const EdgeInsets.all(16),
                     child: Column(
                       children: [
-                        const Icon(
-                          Icons.savings,
-                          size: 32,
-                        ),
+                        const Icon(Icons.savings),
                         const SizedBox(height: 8),
                         const Text('Épargne'),
                         const SizedBox(height: 5),
                         Text(
                           argent(epargneTotale),
                           textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                          ),
                         ),
                       ],
                     ),
@@ -820,19 +921,11 @@ class _NeovaHomeState extends State<NeovaHome> {
                     padding: const EdgeInsets.all(16),
                     child: Column(
                       children: [
-                        const Icon(
-                          Icons.flag,
-                          size: 32,
-                        ),
+                        const Icon(Icons.flag),
                         const SizedBox(height: 8),
                         const Text('Objectifs'),
                         const SizedBox(height: 5),
-                        Text(
-                          '${objectifs.length}',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                        Text('${objectifs.length}'),
                       ],
                     ),
                   ),
@@ -860,25 +953,23 @@ class _NeovaHomeState extends State<NeovaHome> {
               trailing: const Icon(
                 Icons.arrow_forward_ios,
               ),
-              onTap: () async {
-                await Navigator.push(
+              onTap: () {
+                Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => ObjectifsPage(
                       objectifs: objectifs,
                       argent: argent,
                       dateFormat: dateFormat,
-                      onCreate: creerObjectif,
                       onSave: epargner,
                       onRecover: recuperer,
                       onDelete: supprimer,
+                      onCreate: creerObjectif,
                     ),
                   ),
-                );
-
-                if (mounted) {
+                ).then((_) {
                   setState(() {});
-                }
+                });
               },
             ),
           ),
@@ -918,9 +1009,6 @@ class _NeovaHomeState extends State<NeovaHome> {
                   trailing: Text(
                     '${operation.positif ? '+' : '-'}'
                     '${argent(operation.montant)}',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                    ),
                   ),
                 ),
               );
@@ -959,12 +1047,10 @@ class ObjectifsPage extends StatefulWidget {
   });
 
   @override
-  State<ObjectifsPage> createState() =>
-      _ObjectifsPageState();
+  State<ObjectifsPage> createState() => _ObjectifsPageState();
 }
 
-class _ObjectifsPageState
-    extends State<ObjectifsPage> {
+class _ObjectifsPageState extends State<ObjectifsPage> {
   Widget carte(Objectif objectif) {
     double progression = 0;
 
@@ -1026,9 +1112,7 @@ class _ObjectifsPageState
                 ElevatedButton.icon(
                   onPressed: () async {
                     await widget.onSave(objectif);
-                    if (mounted) {
-                      setState(() {});
-                    }
+                    setState(() {});
                   },
                   icon: const Icon(Icons.savings),
                   label: const Text('Épargner'),
@@ -1036,9 +1120,7 @@ class _ObjectifsPageState
                 OutlinedButton(
                   onPressed: () async {
                     await widget.onRecover(objectif);
-                    if (mounted) {
-                      setState(() {});
-                    }
+                    setState(() {});
                   },
                   child: Text(
                     objectif.debloque
@@ -1049,9 +1131,7 @@ class _ObjectifsPageState
                 OutlinedButton(
                   onPressed: () async {
                     await widget.onDelete(objectif);
-                    if (mounted) {
-                      setState(() {});
-                    }
+                    setState(() {});
                   },
                   child: const Text('Supprimer'),
                 ),
@@ -1069,13 +1149,10 @@ class _ObjectifsPageState
       appBar: AppBar(
         title: const Text('Mes objectifs'),
       ),
-      floatingActionButton:
-          FloatingActionButton.extended(
+      floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
           await widget.onCreate();
-          if (mounted) {
-            setState(() {});
-          }
+          setState(() {});
         },
         icon: const Icon(Icons.add),
         label: const Text('Nouvel objectif'),
@@ -1083,290 +1160,14 @@ class _ObjectifsPageState
       body: widget.objectifs.isEmpty
           ? const Center(
               child: Text(
-                'Aucun objectif.\n\n'
-                'Appuie sur « Nouvel objectif ».',
+                'Aucun objectif.',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 17),
               ),
             )
           : ListView(
               padding: const EdgeInsets.all(16),
-              children: widget.objectifs
-                  .map(carte)
-                  .toList(),
+              children: widget.objectifs.map(carte).toList(),
             ),
-    );
-  }
-}
-
-// ============================================================
-// PAGE PIN
-// ============================================================
-
-class PinPage extends StatefulWidget {
-  const PinPage({super.key});
-
-  @override
-  State<PinPage> createState() => _PinPageState();
-}
-
-class _PinPageState extends State<PinPage> {
-  final pinController = TextEditingController();
-  final confirmationController =
-      TextEditingController();
-
-  bool confirmation = false;
-  bool chargement = true;
-  String? pinEnregistre;
-
-  @override
-  void initState() {
-    super.initState();
-    chargerPin();
-  }
-
-  // ==========================================================
-  // CHARGER PIN
-  // ==========================================================
-
-  Future<void> chargerPin() async {
-    try {
-      final pin = await NeovaStorage.chargerPin();
-
-      if (!mounted) return;
-
-      setState(() {
-        pinEnregistre = pin;
-        chargement = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-
-      setState(() {
-        chargement = false;
-      });
-    }
-  }
-
-  // ==========================================================
-  // SAUVEGARDER PIN
-  // ==========================================================
-
-  Future<bool> sauvegarderPin(String pin) async {
-    try {
-      return await NeovaStorage.sauvegarderPin(pin);
-    } catch (_) {
-      return false;
-    }
-  }
-
-  void message(String texte) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(texte)),
-    );
-  }
-
-  // ==========================================================
-  // CONTINUER
-  // ==========================================================
-
-  void continuer() {
-    final pin = pinController.text.trim();
-
-    if (pin.length != 4 ||
-        int.tryParse(pin) == null) {
-      message(
-        'Le PIN doit contenir exactement 4 chiffres.',
-      );
-      return;
-    }
-
-    setState(() {
-      confirmation = true;
-    });
-  }
-
-  // ==========================================================
-  // CONFIRMER
-  // ==========================================================
-
-  Future<void> confirmer() async {
-    final pin1 = pinController.text.trim();
-    final pin2 =
-        confirmationController.text.trim();
-
-    if (pin2.length != 4 ||
-        int.tryParse(pin2) == null) {
-      message(
-        'Le PIN doit contenir exactement 4 chiffres.',
-      );
-      return;
-    }
-
-    if (pin1 != pin2) {
-      message(
-        'Les deux PIN ne correspondent pas.',
-      );
-      return;
-    }
-
-    final ok = await sauvegarderPin(pin1);
-
-    if (!ok) {
-      message(
-        'Impossible de sauvegarder le PIN.',
-      );
-      return;
-    }
-
-    if (!mounted) return;
-
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const NeovaHome(),
-      ),
-    );
-  }
-
-  // ==========================================================
-  // CONNEXION
-  // ==========================================================
-
-  Future<void> connecter() async {
-    final pin = pinController.text.trim();
-
-    if (pin.length != 4 ||
-        int.tryParse(pin) == null) {
-      message(
-        'Le PIN doit contenir exactement 4 chiffres.',
-      );
-      return;
-    }
-
-    // Relire le PIN directement depuis Android.
-    final pinActuel =
-        await NeovaStorage.chargerPin();
-
-    if (pinActuel == null) {
-      message(
-        'Aucun PIN sauvegardé.',
-      );
-      return;
-    }
-
-    if (pin != pinActuel) {
-      message('PIN incorrect.');
-      return;
-    }
-
-    if (!mounted) return;
-
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const NeovaHome(),
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    pinController.dispose();
-    confirmationController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (chargement) {
-      return const Scaffold(
-        body: Center(
-          child: CircularProgressIndicator(),
-        ),
-      );
-    }
-
-    final ancienUtilisateur =
-        pinEnregistre != null;
-
-    final controller = confirmation
-        ? confirmationController
-        : pinController;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('NÉOVA'),
-        centerTitle: true,
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment:
-                MainAxisAlignment.center,
-            children: [
-              const Icon(
-                Icons.savings,
-                size: 80,
-              ),
-              const SizedBox(height: 25),
-              const Text(
-                'Bienvenue sur NÉOVA',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                ancienUtilisateur
-                    ? 'Entre ton PIN pour accéder à NÉOVA'
-                    : confirmation
-                        ? 'Confirme ton PIN'
-                        : 'Crée ton PIN à 4 chiffres',
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 17,
-                ),
-              ),
-              const SizedBox(height: 30),
-              TextField(
-                controller: controller,
-                keyboardType: TextInputType.number,
-                obscureText: true,
-                maxLength: 4,
-                decoration: const InputDecoration(
-                  labelText: 'PIN',
-                  prefixIcon: Icon(Icons.lock),
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 15),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: ancienUtilisateur
-                      ? connecter
-                      : confirmation
-                          ? confirmer
-                          : continuer,
-                  child: Text(
-                    ancienUtilisateur
-                        ? 'Accéder'
-                        : confirmation
-                            ? 'Confirmer'
-                            : 'Continuer',
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }
