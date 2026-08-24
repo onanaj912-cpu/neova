@@ -1,4 +1,4 @@
-name: Build NÉOVA APK
+name: Build NEOVA APK
 
 on:
   push:
@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Recuperer le code
+      - name: Récupérer le projet
         uses: actions/checkout@v4
 
       - name: Installer Flutter
@@ -20,95 +20,13 @@ jobs:
           flutter-version: 3.35.0
           channel: stable
 
-      - name: Regenerer Android proprement
-        run: flutter create --platforms=android .
-
-      - name: Installer les dependances
+      - name: Installer les dépendances
         run: flutter pub get
 
-      - name: Creer la cle de signature
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-        run: |
-          echo "$KEYSTORE_BASE64" | base64 --decode > android/app/neova-release.jks
+      - name: Créer Android
+        run: flutter create --platforms=android .
 
-      - name: Configurer la signature Release
-        env:
-          KEYSTORE_FILE: ${{ github.workspace }}/android/app/neova-release.jks
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("android/app/build.gradle.kts")
-          s = p.read_text()
-
-          # Supprimer proprement tout ancien bloc signingConfigs.
-          while "signingConfigs {" in s:
-              start = s.index("signingConfigs {")
-              i = start
-              depth = 0
-              while i < len(s):
-                  if s[i] == "{":
-                      depth += 1
-                  elif s[i] == "}":
-                      depth -= 1
-                      if depth == 0:
-                          i += 1
-                          break
-                  i += 1
-              s = s[:start] + s[i:]
-
-          # Supprimer proprement le bloc kotlin s'il existe.
-          while "\nkotlin {" in s:
-              start = s.index("\nkotlin {")
-              i = start + 1
-              depth = 0
-              while i < len(s):
-                  if s[i] == "{":
-                      depth += 1
-                  elif s[i] == "}":
-                      depth -= 1
-                      if depth == 0:
-                          i += 1
-                          break
-                  i += 1
-              s = s[:start] + s[i:]
-
-          signing = '''    signingConfigs {
-              create("release") {
-                  keyAlias = System.getenv("KEY_ALIAS")
-                  keyPassword = System.getenv("KEY_PASSWORD")
-                  storeFile = file(System.getenv("KEYSTORE_FILE"))
-                  storePassword = System.getenv("KEYSTORE_PASSWORD")
-              }
-          }
-
-          '''
-
-          s = s.replace("    buildTypes {", signing + "    buildTypes {", 1)
-
-          s = s.replace(
-              'signingConfig = signingConfigs.getByName("debug")',
-              'signingConfig = signingConfigs.getByName("release")'
-          )
-
-          s = s.replace(
-              'signingConfig signingConfigs.getByName("debug")',
-              'signingConfig = signingConfigs.getByName("release")'
-          )
-
-          p.write_text(s)
-          PY
-
-      - name: Construire APK signe
-        env:
-          KEYSTORE_FILE: ${{ github.workspace }}/android/app/neova-release.jks
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      - name: Construire APK
         run: flutter build apk --release
 
       - name: Publier APK
